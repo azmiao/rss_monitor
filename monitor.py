@@ -1,16 +1,22 @@
-import datetime
 import os
-from typing import Optional
+from datetime import datetime, timezone
 
-import feedparser
 from rocksdict import Rdict
 
 from yuiChyan import base_db_path, CQEvent, YuiChyan, FunctionException, get_bot
 from yuiChyan.service import Service
-from yuiChyan.util import RSSParser
-
+from yuiChyan.util import RSSParser, parse_datetime, FeedEntry
+from yuiChyan.util.date_utils import format_datetime
 
 sv = Service('rss_monitor')
+
+
+async def get_database() -> Rdict:
+    """
+    监控信息数据库
+    """
+    rss_monitor_db = Rdict(os.path.join(base_db_path, 'rss_monitor.db'))
+    return rss_monitor_db
 
 
 @sv.on_prefix(('添加RSS订阅', '增加RSS订阅', '新增RSS订阅'))
@@ -74,94 +80,58 @@ async def monitor_schedule():
     for group_id in rss_monitor_db.keys():
         group_data: dict = rss_monitor_db.get(group_id, {})
         for user_id, rss_dict in group_data.items():
-            # 第一次订阅后update_time为None
-            for rss_url, update_time in rss_dict.items():
-                # try:
-                # 检测 RSS 是否有更新
-                new_update_time, new_entries = await check_rss(rss_url, update_time)
-                # 有更新
-                if new_entries:
-                    # 更新数据库里的更新时间
-                    rss_dict[rss_url] = new_update_time
-                    rss_monitor_db[group_id][user_id] = rss_dict
-                    await bot.send_group_msg(group_id=group_id, message=format_entries_message(new_entries))
-                # except Exception as e:
-                #     print(f"[ERROR] 监控 RSS {rss_url} 失败: {e}")
+            # 第一次订阅后old_time_str为None
+            for rss_url, old_time_str in rss_dict.items():
+                try:
+                    # 检测 RSS 是否有更新
+                    new_time_str, new_entries = await check_rss(rss_url, old_time_str)
+                    # 有更新
+                    if new_entries:
+                        # 更新数据库里的更新时间
+                        rss_dict[rss_url] = new_time_str
+                        group_data[user_id] = rss_dict
+                        rss_monitor_db[group_id] = group_data
+                        format_msg = format_entries_message(new_entries)
+                        msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
+                        await bot.send_group_msg(group_id=group_id, message=msg)
+                except Exception as e:
+                    print(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}")
+    rss_monitor_db.close()
 
 
-async def get_database() -> Rdict:
-    """
-    监控信息数据库
-    """
-    rss_monitor_db = Rdict(os.path.join(base_db_path, 'rss_monitor.db'))
-    return rss_monitor_db
-
-
-async def check_rss(rss_url: str, update_time: Optional[str]):
+async def check_rss(rss_url: str, old_time_str: str | None) -> tuple[str | None, list[FeedEntry]]:
     """
     检测 RSS 是否有新内容
     :param rss_url: RSS 链接
-    :param update_time: 数据库中记录的上次更新时间（可能是 None）
+    :param old_time_str: 数据库中记录的上次更新时间（可能是 None）
     :return: (新的更新时间, 新的条目列表)
     """
     parser = RSSParser(rss_url)
     feed = parser.parse_feed()
 
     if not feed.entries:
-        return update_time, []
+        return old_time_str, []
 
-    # 找出列表里最新的时间
-    latest_time_dt = None
-    latest_time_str = None
-    for entry in feed.entries:
-        entry_dt = parse_datetime(entry.published)
-        sv.logger.info(entry.published)
-        sv.logger.info(entry_dt)
-        if entry_dt and (latest_time_dt is None or entry_dt > latest_time_dt):
-            latest_time_dt = entry_dt
-            latest_time_str = entry.published
+    # 按照时间从新到旧排序
+    feed.entries.sort(reverse=True)
 
-    new_entries = []
-    # 第一次订阅，返回全部
-    if update_time is None:
+    new_entries: list[FeedEntry]
+    if old_time_str is None:
+        # 第一次订阅，返回全部
         new_entries = feed.entries
     else:
-        old_time_dt = parse_datetime(update_time)
-        for entry in feed.entries:
-            entry_dt = parse_datetime(entry.published)
-            if entry_dt and entry_dt > old_time_dt:
-                new_entries.append(entry)
+        # 后续只返回新的
+        old_time = parse_datetime(old_time_str) or datetime.min.replace(tzinfo=timezone.utc)
+        new_entries = [e for e in feed.entries if e.update_time > old_time]
 
-    return latest_time_str, new_entries
+    return new_entries[0].update_time_str if new_entries else old_time_str, new_entries
 
 
-def parse_datetime(dt_str: str) -> datetime.datetime | None:
-    """解析 RSS 日期字符串，返回 datetime（UTC标准化）"""
-    if not dt_str:
-        return None
-
-    # 优先用 ISO8601 格式解析，例如 2025-11-20T22:48:23+08:00
-    try:
-        return datetime.datetime.fromisoformat(dt_str)
-    except ValueError:
-        pass
-
-    # 尝试 feedparser 的解析功能（支持 RFC822 等）
-    try:
-        parsed = feedparser.parse(dt_str)
-        if hasattr(parsed, "updated_parsed") and parsed.updated_parsed:
-            return datetime.datetime(*parsed.updated_parsed[:6])
-    except Exception:
-        pass
-
-    return None
-
-
-def format_entries_message(entries, limit: int = 5):
+def format_entries_message(entries: list[FeedEntry], limit: int = 5):
     msgs = []
     total = len(entries)
     for e in entries[:limit]:
-        msgs.append(f"📢 {e.title}\n🔗 {e.link}\n🕒 {e.published}")
+        msgs.append(f"📢 {e.title}\n🔗 {e.link}\n🕒 {format_datetime(e.update_time)}")
     if total > limit:
-        msgs.append(f"…还有 {total - limit} 条新内容未显示")
+        msgs.append(f"> 另外还有 {total - limit} 条新内容未显示")
     return "\n\n".join(msgs)
