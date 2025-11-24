@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from rocksdict import Rdict
 
 from yuiChyan import base_db_path, CQEvent, YuiChyan, FunctionException, get_bot
+from yuiChyan.config import PROXY
 from yuiChyan.service import Service
 from yuiChyan.util import RSSParser, parse_datetime, FeedEntry
 from yuiChyan.util.date_utils import format_datetime
@@ -73,7 +74,7 @@ async def add_rss_url(bot: YuiChyan, ev: CQEvent):
     await bot.send(ev, f'已成功删除订阅：{rss_url}', at_sender=True)
 
 
-@sv.scheduled_job(minute='*/1')
+@sv.scheduled_job(minute='*/10')
 async def monitor_schedule():
     bot = get_bot()
     rss_monitor_db = await get_database()
@@ -106,7 +107,7 @@ async def check_rss(rss_url: str, old_time_str: str | None) -> tuple[str | None,
     :param old_time_str: 数据库中记录的上次更新时间（可能是 None）
     :return: (新的更新时间, 新的条目列表)
     """
-    parser = RSSParser(rss_url)
+    parser = RSSParser(rss_url, PROXY)
     feed = parser.parse_feed()
 
     if not feed.entries:
