@@ -76,7 +76,7 @@ async def add_rss_url(bot: YuiChyan, ev: CQEvent):
     await bot.send(ev, f'已成功删除订阅：{rss_url}', at_sender=True)
 
 
-@sv.scheduled_job(minute='*/1')
+@sv.scheduled_job(minute='*/10')
 async def monitor_schedule():
     bot = get_bot()
     rss_monitor_db = await get_database()
@@ -85,19 +85,20 @@ async def monitor_schedule():
         for user_id, rss_dict in group_data.items():
             # 第一次订阅后old_time_str为None
             for rss_url, old_time_str in rss_dict.items():
-
-                # 检测 RSS 是否有更新
-                new_time_str, new_entries = await check_rss(rss_url, old_time_str)
-                # 有更新
-                if new_entries:
-                    # 更新数据库里的更新时间
-                    rss_dict[rss_url] = new_time_str
-                    group_data[user_id] = rss_dict
-                    rss_monitor_db[group_id] = group_data
-                    format_msg = format_entries_message(new_entries)
-                    msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
-                    await bot.send_group_msg(group_id=group_id, message=msg)
-
+                try:
+                    # 检测 RSS 是否有更新
+                    new_time_str, new_entries = await check_rss(rss_url, old_time_str)
+                    # 有更新
+                    if new_entries:
+                        # 更新数据库里的更新时间
+                        rss_dict[rss_url] = new_time_str
+                        group_data[user_id] = rss_dict
+                        rss_monitor_db[group_id] = group_data
+                        format_msg = format_entries_message(new_entries)
+                        msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
+                        await bot.send_group_msg(group_id=group_id, message=msg)
+                except Exception as e:
+                    sv.logger.error(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}")
     rss_monitor_db.close()
 
 
