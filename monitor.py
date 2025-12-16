@@ -1,4 +1,6 @@
+import json
 import os
+import re
 from datetime import datetime, timezone
 
 from rocksdict import Rdict
@@ -74,7 +76,7 @@ async def add_rss_url(bot: YuiChyan, ev: CQEvent):
     await bot.send(ev, f'已成功删除订阅：{rss_url}', at_sender=True)
 
 
-@sv.scheduled_job(minute='*/10')
+@sv.scheduled_job(minute='*/1')
 async def monitor_schedule():
     bot = get_bot()
     rss_monitor_db = await get_database()
@@ -83,21 +85,38 @@ async def monitor_schedule():
         for user_id, rss_dict in group_data.items():
             # 第一次订阅后old_time_str为None
             for rss_url, old_time_str in rss_dict.items():
-                try:
-                    # 检测 RSS 是否有更新
-                    new_time_str, new_entries = await check_rss(rss_url, old_time_str)
-                    # 有更新
-                    if new_entries:
-                        # 更新数据库里的更新时间
-                        rss_dict[rss_url] = new_time_str
-                        group_data[user_id] = rss_dict
-                        rss_monitor_db[group_id] = group_data
-                        format_msg = format_entries_message(new_entries)
-                        msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
-                        await bot.send_group_msg(group_id=group_id, message=msg)
-                except Exception as e:
-                    print(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}")
+
+                # 检测 RSS 是否有更新
+                new_time_str, new_entries = await check_rss(rss_url, old_time_str)
+                # 有更新
+                if new_entries:
+                    # 更新数据库里的更新时间
+                    rss_dict[rss_url] = new_time_str
+                    group_data[user_id] = rss_dict
+                    rss_monitor_db[group_id] = group_data
+                    format_msg = format_entries_message(new_entries)
+                    msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
+                    await bot.send_group_msg(group_id=group_id, message=msg)
+
     rss_monitor_db.close()
+
+
+async def get_config_headers(rss_url: str) -> dict | None:
+    """
+    按照正则规则去配置中匹配对应的headers
+    :param rss_url: RSS 链接
+    :return: 对应的headers
+    """
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    if not os.path.exists(config_path):
+        return None
+    with open(config_path, 'r', encoding='utf-8') as f:
+        headers_dict = dict(json.load(f))
+    # 循环正则匹配规则
+    for pattern in headers_dict:
+        if re.match(pattern, rss_url):
+            return headers_dict.get(pattern, {})
+    return None
 
 
 async def check_rss(rss_url: str, old_time_str: str | None) -> tuple[str | None, list[FeedEntry]]:
@@ -107,8 +126,9 @@ async def check_rss(rss_url: str, old_time_str: str | None) -> tuple[str | None,
     :param old_time_str: 数据库中记录的上次更新时间（可能是 None）
     :return: (新的更新时间, 新的条目列表)
     """
-    parser = RSSParser(rss_url, PROXY)
-    feed = parser.parse_feed()
+    headers = await get_config_headers(rss_url)
+    parser = RSSParser(rss_url, PROXY, 10, headers)
+    feed = await parser.parse_feed()
 
     if not feed.entries:
         return old_time_str, []
