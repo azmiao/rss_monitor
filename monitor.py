@@ -3,6 +3,7 @@ import os
 import re
 from datetime import datetime, timezone
 
+from httpx import HTTPStatusError
 from rocksdict import Rdict
 
 from yuiChyan import base_db_path, CQEvent, YuiChyan, FunctionException, get_bot
@@ -97,6 +98,8 @@ async def monitor_schedule():
                         format_msg = format_entries_message(new_entries)
                         msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
                         await bot.send_group_msg(group_id=group_id, message=msg)
+                except HTTPStatusError as e:
+                    sv.logger.info(f"[ERROR] 监控 RSS {rss_url} 失败，出现HTTP错误：{str(e)}")
                 except Exception as e:
                     sv.logger.error(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}", e)
     rss_monitor_db.close()
