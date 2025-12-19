@@ -98,7 +98,7 @@ async def monitor_schedule():
                         msg = f'[CQ:at,qq={user_id}]您订阅的RSS有更新：\n{format_msg}'
                         await bot.send_group_msg(group_id=group_id, message=msg)
                 except Exception as e:
-                    sv.logger.error(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}")
+                    sv.logger.error(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}", e)
     rss_monitor_db.close()
 
 
