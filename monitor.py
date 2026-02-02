@@ -101,7 +101,7 @@ async def monitor_schedule():
                 except HTTPStatusError as e:
                     sv.logger.info(f"[ERROR] 监控 RSS {rss_url} 失败，出现HTTP错误：{str(e)}")
                 except Exception as e:
-                    sv.logger.error(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}", e)
+                    sv.logger.error(f"[ERROR] 监控 RSS {rss_url} 失败: {str(e)}")
     rss_monitor_db.close()
 
 
